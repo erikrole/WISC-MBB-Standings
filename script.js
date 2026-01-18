@@ -141,7 +141,31 @@ function updateTimestamp() {
   const isStale = timeSinceUpdate > STALE_DATA_THRESHOLD_MS;
 
   const updateDate = new Date(lastSuccessfulUpdate);
-  ts.textContent = "Last updated " + updateDate.toLocaleString();
+
+  // Format as relative date
+  const nowDate = new Date(now);
+  const isToday = updateDate.toDateString() === nowDate.toDateString();
+  const isYesterday = new Date(now - 86400000).toDateString() === updateDate.toDateString();
+
+  const timeString = updateDate.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+
+  let datePrefix;
+  if (isToday) {
+    datePrefix = "Today";
+  } else if (isYesterday) {
+    datePrefix = "Yesterday";
+  } else {
+    datePrefix = updateDate.toLocaleDateString('en-US', {
+      month: 'numeric',
+      day: 'numeric'
+    });
+  }
+
+  ts.textContent = `Last updated ${datePrefix} at ${timeString}`;
   ts.className = isStale ? "timestamp stale" : "timestamp";
 }
 
