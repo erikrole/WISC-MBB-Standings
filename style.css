@@ -93,6 +93,19 @@ body {
   position: relative;
 }
 
+.header-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5vh;
+}
+
+.b1g-logo {
+  height: 12vh;
+  width: auto;
+  object-fit: contain;
+}
+
 .header h1 {
   font-size: var(--size-header);
   line-height: 0.55;
@@ -191,8 +204,12 @@ body {
 }
 
 .rank {
-  opacity: 0.9;
+  opacity: 0.95;
   font-family: var(--font-heavy);
+  font-size: 1.1em;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
 }
 
 /* Team cell = AP rank + team name */
