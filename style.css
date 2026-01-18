@@ -297,7 +297,8 @@ body {
 }
 
 .brand {
-  letter-spacing: 0.18em;
+  font-family: var(--font-wisconsin);
+  letter-spacing: 0.02em;
 }
 
 .timestamp-container {
