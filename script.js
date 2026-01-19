@@ -155,9 +155,9 @@ function updateTimestamp() {
 
   let datePrefix;
   if (isToday) {
-    datePrefix = "Today";
+    datePrefix = "today";
   } else if (isYesterday) {
-    datePrefix = "Yesterday";
+    datePrefix = "yesterday";
   } else {
     datePrefix = updateDate.toLocaleDateString('en-US', {
       month: 'numeric',
