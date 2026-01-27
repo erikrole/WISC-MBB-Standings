@@ -237,13 +237,14 @@ body {
 .ap-rank {
   position: absolute;
   left: 0;
-  top: 0.1em;
-  font-size: 0.6em;
-  opacity: 0.85;
-  transform: translateY(-0.05em);
+  top: 0;
+  font-size: 0.85em;
+  opacity: 0.95;
+  font-weight: bold;
   text-align: right;
   width: 2ch;
   font-family: var(--font-nano);
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .net-rank {
