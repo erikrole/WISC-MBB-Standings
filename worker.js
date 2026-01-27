@@ -1,8 +1,6 @@
 /**
  * Cloudflare Worker for Big Ten Basketball Standings
- * Scrapes WarrenNolan.com and returns JSON with CORS headers
- *
- * Deploy: Copy this entire file to Cloudflare Workers dashboard
+ * Fetches data from WarrenNolan (standings + NET) and NCAA (AP Poll)
  */
 
 export default {
@@ -19,25 +17,44 @@ export default {
     }
 
     try {
-      // Fetch WarrenNolan standings
-      const response = await fetch(
-        'https://www.warrennolan.com/basketball/2026/conference/Big-Ten',
-        {
+      // Fetch both sources in parallel
+      const [warrenNolanResponse, apPollResponse] = await Promise.all([
+        fetch('https://www.warrennolan.com/basketball/2026/conference/Big-Ten', {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; BigTenStandings/1.0)',
           },
-        }
-      );
+        }),
+        fetch('https://www.ncaa.com/rankings/basketball-men/d1/associated-press', {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; BigTenStandings/1.0)',
+          },
+        }),
+      ]);
 
-      if (!response.ok) {
-        throw new Error(`WarrenNolan returned ${response.status}`);
+      if (!warrenNolanResponse.ok) {
+        throw new Error(`WarrenNolan returned ${warrenNolanResponse.status}`);
       }
 
-      const html = await response.text();
-      const standings = parseHTML(html);
+      // Parse both HTMLs
+      const warrenNolanHTML = await warrenNolanResponse.text();
+      const apPollHTML = apPollResponse.ok ? await apPollResponse.text() : '';
+
+      // Get standings from WarrenNolan
+      const standings = parseWarrenNolanTable(warrenNolanHTML);
 
       if (!standings || standings.length === 0) {
         throw new Error('No standings data found');
+      }
+
+      // Get AP rankings from NCAA
+      const apRankings = parseAPPoll(apPollHTML);
+
+      // Merge AP rankings into standings
+      for (const team of standings) {
+        const apRank = apRankings[team.team];
+        if (apRank) {
+          team.apRank = apRank;
+        }
       }
 
       // Return JSON with CORS
@@ -67,26 +84,26 @@ export default {
 };
 
 /**
- * Parse WarrenNolan HTML to extract standings data
+ * Parse WarrenNolan conference standings table
+ * Table columns: Rank | Team | Conf Record | Conf Win% | GB | Overall Record | Overall Win% | NET | Q1
  */
-function parseHTML(html) {
+function parseWarrenNolanTable(html) {
   const standings = [];
 
   try {
-    // Find the main standings table
-    // WarrenNolan uses a simple table structure
+    // Find all tables
     const tableRegex = /<table[^>]*>([\s\S]*?)<\/table>/gi;
     const tables = html.match(tableRegex);
 
     if (!tables || tables.length === 0) {
-      throw new Error('No tables found in HTML');
+      throw new Error('No tables found');
     }
 
-    // Usually the first or second table contains standings
-    // Look for one with "W-L" pattern indicating records
+    // Find the table with standings data (contains "Conference" headers)
     let standingsTable = null;
     for (const table of tables) {
-      if (table.includes('-') && table.includes('<td')) {
+      // Look for table with records (W-L format) and multiple rows
+      if (table.includes('-') && (table.match(/<tr/gi) || []).length > 5) {
         standingsTable = table;
         break;
       }
@@ -100,77 +117,39 @@ function parseHTML(html) {
     const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     const rows = [...standingsTable.matchAll(rowRegex)];
 
-    // Skip header row(s)
+    // Process each row (skip header)
     for (let i = 1; i < rows.length; i++) {
       const rowHTML = rows[i][1];
 
-      // Skip if row is a header
+      // Skip header rows
       if (rowHTML.includes('<th')) continue;
 
-      // Extract cells
+      // Extract all cells
       const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
       const cells = [...rowHTML.matchAll(cellRegex)].map(m =>
         stripHTML(m[1]).trim()
       );
 
-      if (cells.length < 3) continue; // Need at least team + 2 records
+      // Need at least 8 columns
+      if (cells.length < 8) continue;
 
-      // Parse cell data
-      // Typical format: [Rank/Position, Team, Conf, Overall, NET, ...]
-      let teamName = '';
-      let confRecord = '';
-      let ovrRecord = '';
-      let apRank = 999;
-      let netRank = null;
+      // Parse based on column positions
+      // Column 0: Rank (position number)
+      // Column 1: Team name
+      // Column 2: Conference record (W-L)
+      // Column 3: Conference Win %
+      // Column 4: Games Back
+      // Column 5: Overall record (W-L)
+      // Column 6: Overall Win %
+      // Column 7: NET rank
+      // Column 8+: Q1, etc.
 
-      // Figure out which cells have which data
-      // Cell 0 or 1 usually has team name
-      // Look for the cell that's not a record format
-      for (let j = 0; j < Math.min(cells.length, 8); j++) {
-        const cell = cells[j];
+      const teamName = cells[1]?.trim();
+      const confRecord = cells[2]?.trim();
+      const ovrRecord = cells[5]?.trim();
+      const netRankStr = cells[7]?.trim();
 
-        if (!cell) continue;
-
-        // Check if it's a record (W-L format)
-        if (/^\d+-\d+$/.test(cell)) {
-          if (!confRecord) {
-            confRecord = cell;
-          } else if (!ovrRecord) {
-            ovrRecord = cell;
-          }
-        }
-        // Check if it's a ranking number alone (could be AP or NET)
-        else if (/^\d+$/.test(cell)) {
-          const num = parseInt(cell, 10);
-          // AP ranks are typically 1-25
-          if (num <= 25 && cell.length <= 2) {
-            apRank = num;
-          }
-          // NET ranks are typically 1-350+
-          else if (num > 0 && num <= 400 && !netRank) {
-            netRank = num;
-          }
-        }
-        // Otherwise it's likely the team name
-        else if (cell.length > 2 && !teamName) {
-          teamName = cell;
-        }
-      }
-
-      // Extract AP rank from team name if present (e.g., "5 Purdue")
-      const rankMatch = teamName.match(/^(\d+)\s+(.+)$/);
-      if (rankMatch) {
-        apRank = parseInt(rankMatch[1], 10);
-        teamName = rankMatch[2];
-      }
-
-      // Clean up team name
-      teamName = teamName
-        .replace(/^\d+\.\s*/, '') // Remove "1. " prefix
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      if (!teamName || !confRecord) continue;
+      if (!teamName || !confRecord || !ovrRecord) continue;
 
       // Parse records
       const confMatch = confRecord.match(/(\d+)-(\d+)/);
@@ -178,14 +157,20 @@ function parseHTML(html) {
 
       const confWins = confMatch ? parseInt(confMatch[1], 10) : 0;
       const confLosses = confMatch ? parseInt(confMatch[2], 10) : 0;
-      const overallWins = ovrMatch ? parseInt(ovrMatch[1], 10) : confWins;
-      const overallLosses = ovrMatch ? parseInt(ovrMatch[2], 10) : confLosses;
+      const overallWins = ovrMatch ? parseInt(ovrMatch[1], 10) : 0;
+      const overallLosses = ovrMatch ? parseInt(ovrMatch[2], 10) : 0;
+
+      // Parse NET rank (might be empty or have special chars)
+      let netRank = null;
+      if (netRankStr && /^\d+$/.test(netRankStr)) {
+        netRank = parseInt(netRankStr, 10);
+      }
 
       standings.push({
         team: teamName.toUpperCase(),
         conf: confRecord,
-        ovr: ovrRecord || confRecord,
-        apRank,
+        ovr: ovrRecord,
+        apRank: 999, // Will be filled in from NCAA data
         netRank,
         wins: overallWins,
         losses: overallLosses,
@@ -198,6 +183,90 @@ function parseHTML(html) {
   }
 
   return standings;
+}
+
+/**
+ * Parse AP Poll from NCAA.com
+ * Returns object mapping team name to AP rank
+ */
+function parseAPPoll(html) {
+  const rankings = {};
+
+  if (!html) return rankings;
+
+  try {
+    // Find the rankings table
+    const tableRegex = /<table[^>]*>([\s\S]*?)<\/table>/gi;
+    const tables = html.match(tableRegex);
+
+    if (!tables || tables.length === 0) {
+      return rankings;
+    }
+
+    // Use first table (AP Poll)
+    const pollTable = tables[0];
+
+    // Extract rows
+    const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    const rows = [...pollTable.matchAll(rowRegex)];
+
+    // Process each row
+    for (let i = 1; i < rows.length; i++) {
+      const rowHTML = rows[i][1];
+
+      // Skip header rows
+      if (rowHTML.includes('<th')) continue;
+
+      // Extract cells
+      const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+      const cells = [...rowHTML.matchAll(cellRegex)].map(m =>
+        stripHTML(m[1]).trim()
+      );
+
+      if (cells.length < 2) continue;
+
+      // First cell is rank, second is team name
+      const rank = parseInt(cells[0], 10);
+      let teamName = cells[1];
+
+      // Clean team name (remove record, points, etc)
+      // Example: "Nebraska (18-0)" -> "Nebraska"
+      teamName = teamName
+        .replace(/\([^)]*\)/g, '') // Remove parentheses content
+        .replace(/\d+-\d+/g, '') // Remove records
+        .trim();
+
+      // Normalize team names to match WarrenNolan
+      teamName = normalizeTeamName(teamName);
+
+      if (rank && teamName) {
+        rankings[teamName] = rank;
+      }
+    }
+  } catch (error) {
+    console.error('Error parsing AP Poll:', error);
+  }
+
+  return rankings;
+}
+
+/**
+ * Normalize team names to match between sources
+ */
+function normalizeTeamName(name) {
+  const normalized = name.toUpperCase().trim();
+
+  // Handle common variations
+  const mapping = {
+    'MICHIGAN ST': 'MICHIGAN STATE',
+    'MICHIGAN ST.': 'MICHIGAN STATE',
+    'OHIO ST': 'OHIO STATE',
+    'OHIO ST.': 'OHIO STATE',
+    'PENN ST': 'PENN STATE',
+    'PENN ST.': 'PENN STATE',
+  };
+
+  return mapping[normalized] || normalized;
 }
 
 /**
