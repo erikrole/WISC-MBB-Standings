@@ -263,6 +263,58 @@ function createTeamRow(rowData, index) {
 }
 
 // =====================
+// DOM DIFFING HELPERS
+// =====================
+function updateTable(newTeamRows) {
+  const tableEl = document.getElementById("table");
+  const existingRows = Array.from(tableEl.querySelectorAll('.row'));
+
+  newTeamRows.forEach((rowData, index) => {
+    const existingRow = existingRows[index];
+
+    if (!existingRow) {
+      // New row - append
+      tableEl.appendChild(createTeamRow(rowData, index));
+    } else if (needsUpdate(existingRow, rowData, index)) {
+      // Replace row if data changed
+      const newRow = createTeamRow(rowData, index);
+      tableEl.replaceChild(newRow, existingRow);
+    }
+    // else: no change, keep existing DOM
+  });
+
+  // Remove excess rows if teams were removed
+  while (existingRows.length > newTeamRows.length) {
+    tableEl.removeChild(existingRows[existingRows.length - 1]);
+    existingRows.pop();
+  }
+}
+
+function needsUpdate(row, newData, newIndex) {
+  // Check if any displayed values changed
+  const confCell = row.querySelector('.conf');
+  const ovrCell = row.querySelector('.ovr');
+  const rankCell = row.querySelector('.rank');
+  const apRankSpan = row.querySelector('.ap-rank');
+  const netRankSpan = row.querySelector('.net-rank');
+
+  const currentApRank = apRankSpan ? apRankSpan.textContent : '';
+  const expectedApRank = newData.apRank < NO_RANK_VALUE ? String(newData.apRank) : '';
+
+  const currentNetRank = netRankSpan ? netRankSpan.textContent : '';
+  const expectedNetRank = newData.netRank ? `NET ${newData.netRank}` : '';
+
+  return (
+    row.dataset.team !== newData.team ||
+    confCell?.textContent !== newData.conf ||
+    ovrCell?.textContent !== newData.ovr ||
+    rankCell?.textContent !== `${newIndex + 1}.` ||
+    currentApRank !== expectedApRank ||
+    currentNetRank !== expectedNetRank
+  );
+}
+
+// =====================
 // MAIN LOAD FUNCTION
 // =====================
 async function loadStandings() {
@@ -377,14 +429,7 @@ async function loadStandings() {
     teamRows.sort(compareTeams);
 
     // ---- Render ----
-    const tableEl = document.getElementById("table");
-    tableEl.innerHTML = "";
-
-    const fragment = document.createDocumentFragment();
-    teamRows.forEach((rowData, index) => {
-      fragment.appendChild(createTeamRow(rowData, index));
-    });
-    tableEl.appendChild(fragment);
+    updateTable(teamRows);
 
     // Update standings tracking for next comparison
     previousStandings.clear();
